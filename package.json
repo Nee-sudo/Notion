@@ -1,0 +1,10 @@
+
+{
+  "name": "youtube-creator-os",
+  "version": "1.0.0",
+  "private": true,
+  "description": "YouTube Creator OS with Notion synchronization",
+  "engines": {
+    "node": ">=20"
+  }
+}
