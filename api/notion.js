@@ -215,9 +215,8 @@ async function loadPlans() {
     try {
       const video = JSON.parse(json);
       plans.push({
-        ...video,
-        notionPageId: page.id,
-        notionSync: true
+        video,
+        pageId: page.id
       });
     } catch {
       // Skip malformed payloads; continue loading other pages.
