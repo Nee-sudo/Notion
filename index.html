@@ -1336,6 +1336,31 @@
         }
         const d = blankState();
         for (const k in d) if (S[k] == null) S[k] = d[k];
+        if (!Array.isArray(S.videos)) S.videos = [];
+        if (!Array.isArray(S.lessons)) S.lessons = [];
+        if (!Array.isArray(S.promises)) S.promises = [];
+        if (!Array.isArray(S.experiments)) S.experiments = [];
+        if (!Array.isArray(S.ideas)) S.ideas = [];
+        S.videos = S.videos.map(v => {
+          if (!v || typeof v !== "object") return newVideo("Recovered");
+          v.idn = v.idn || { working: v.title || v.name || "Untitled", relation: "Standalone" };
+          v.stages = Array.isArray(v.stages) ? v.stages : Array(15).fill(false);
+          v.goal = v.goal || {};
+          v.prem = v.prem || {};
+          v.refs = Array.isArray(v.refs) ? v.refs : [];
+          v.insp = v.insp || {};
+          v.val = Object.assign({ scores: {} }, v.val || {});
+          v.pkg = Object.assign({ titles: [], checks: {} }, v.pkg || {});
+          v.scr = Object.assign({ outline: [], sections: [] }, v.scr || {});
+          v.jr = Array.isArray(v.jr) ? v.jr : [];
+          v.mine = v.mine || {};
+          v.prod = Object.assign({ checks: {}, shots: [] }, v.prod || {});
+          v.an = Object.assign({ snaps: [], advice: [], ret: [], q: {}, dx: {} }, v.an || {});
+          v.next = Object.assign({ fix: [], keep: [], test: [] }, v.next || {});
+          v.id = v.id || uid();
+          v.status = v.status || "Idea";
+          return v;
+        });
         S.settings = Object.assign({}, d.settings, S.settings);
         UI = S.ui;
         document.documentElement.dataset.theme = S.settings.theme || "light";
@@ -3587,9 +3612,14 @@ Begin with Stage 1.`;
           ([k, i, l], n) =>
             `<a data-act="nav" data-view="${k}" class="${UI.view === k || (UI.view === "video" && k === "pipeline") ? "on" : ""}" tabindex="0" role="link"><span class="n">${i}</span>${l}</a>`,
         ).join("");
-        $("#main").innerHTML = VIEWS[UI.view]
-          ? VIEWS[UI.view]()
-          : VIEWS.dashboard();
+        try {
+          $("#main").innerHTML = VIEWS[UI.view]
+            ? VIEWS[UI.view]()
+            : VIEWS.dashboard();
+        } catch (err) {
+          console.error("Render error:", err);
+          $("#main").innerHTML = `<div class="alert bad" style="margin:24px"><b>Render error:</b> ${esc(err.message)}<br><br>This usually means saved data is corrupted. Try: <button class="btn dng" onclick="localStorage.removeItem('yt-creator-os-v1');location.reload()">Reset local data</button> then click <b>Load from Notion</b>.</div>`;
+        }
         const pt = $("#ptxt");
         if (pt) pt.value = get(pt.dataset.p) || "";
         calc();
@@ -4405,6 +4435,8 @@ Begin with Stage 1.`;
       /* ============ INIT ============ */
       load();
       render();
+      // Auto-load from Notion on startup
+      loadNotionPlans().catch(e => console.warn("Auto-load from Notion failed:", e));
       if (memOnly)
         $("#saved").textContent = "⚠ Storage unavailable — export backups";
     </script>
