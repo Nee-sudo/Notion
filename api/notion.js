@@ -3,7 +3,7 @@ const NOTION_VERSION = "2022-06-28";
 const START_MARKER = "CREATOR_OS_DATA_START";
 const END_MARKER = "CREATOR_OS_DATA_END";
 
-function notionHeaders() {
+function headers() {
   return {
     Authorization: `Bearer ${process.env.NOTION_TOKEN}`,
     "Notion-Version": NOTION_VERSION,
@@ -14,10 +14,7 @@ function notionHeaders() {
 async function notionRequest(path, options = {}) {
   const response = await fetch(`https://api.notion.com/v1${path}`, {
     ...options,
-    headers: {
-      ...notionHeaders(),
-      ...(options.headers || {})
-    }
+    headers: { ...headers(), ...(options.headers || {}) }
   });
 
   const data = await response.json().catch(() => ({}));
@@ -31,16 +28,17 @@ async function notionRequest(path, options = {}) {
   return data;
 }
 
-function getTitle(video) {
-  return (
-    video.title ||
-    video.name ||
-    video.videoTitle ||
+function titleOf(video) {
+  return String(
+    video?.title ||
+    video?.name ||
+    video?.idn?.final ||
+    video?.idn?.working ||
     "Untitled Video Plan"
-  ).toString().slice(0, 200);
+  ).slice(0, 200);
 }
 
-function paragraph(text) {
+function textBlock(text) {
   return {
     object: "block",
     type: "paragraph",
@@ -50,53 +48,44 @@ function paragraph(text) {
   };
 }
 
-function jsonBlocks(video) {
+function makePayloadBlocks(video) {
   const json = JSON.stringify(video, null, 2);
-  const blocks = [paragraph(START_MARKER)];
+  const blocks = [textBlock(START_MARKER)];
 
-  // Notion limits the content of an individual rich-text item.
-  // Separate code blocks preserve large JSON payloads.
-  const chunkSize = 1800;
-
-  for (let i = 0; i < json.length; i += chunkSize) {
+  for (let i = 0; i < json.length; i += 1800) {
     blocks.push({
       object: "block",
       type: "code",
       code: {
         language: "json",
-        rich_text: [
-          {
-            type: "text",
-            text: {
-              content: json.slice(i, i + chunkSize)
-            }
-          }
-        ]
+        rich_text: [{
+          type: "text",
+          text: { content: json.slice(i, i + 1800) }
+        }]
       }
     });
   }
 
-  blocks.push(paragraph(END_MARKER));
+  blocks.push(textBlock(END_MARKER));
   return blocks;
 }
 
 function blockText(block) {
-  const content = block[block.type]?.rich_text || [];
-  return content.map(item => item.plain_text || item.text?.content || "")
+  return (block[block.type]?.rich_text || [])
+    .map(item => item.plain_text || item.text?.content || "")
     .join("");
 }
 
-async function getAllChildren(blockId) {
+async function getChildren(blockId) {
   const results = [];
   let cursor;
 
   do {
-    const query = cursor
-      ? `?page_size=100&start_cursor=${encodeURIComponent(cursor)}`
-      : "?page_size=100";
+    const query = new URLSearchParams({ page_size: "100" });
+    if (cursor) query.set("start_cursor", cursor);
 
     const data = await notionRequest(
-      `/blocks/${blockId}/children${query}`
+      `/blocks/${blockId}/children?${query}`
     );
 
     results.push(...data.results);
@@ -106,22 +95,21 @@ async function getAllChildren(blockId) {
   return results;
 }
 
-async function deletePreviousPayload(pageId) {
-  const blocks = await getAllChildren(pageId);
+async function deleteManagedPayload(pageId) {
+  const blocks = await getChildren(pageId);
+  const start = blocks.findIndex(
+    block => blockText(block) === START_MARKER
+  );
 
-  let start = -1;
-  let end = -1;
+  if (start < 0) return;
 
-  for (let i = 0; i < blocks.length; i++) {
-    if (blockText(blocks[i]) === START_MARKER) start = i;
-    if (start !== -1 && blockText(blocks[i]) === END_MARKER) {
-      end = i;
-      break;
-    }
-  }
+  const end = blocks.findIndex(
+    (block, index) =>
+      index > start && blockText(block) === END_MARKER
+  );
 
-  // If no complete marked section exists, preserve the page.
-  if (start === -1 || end === -1 || end < start) return;
+  // Preserve existing content if the payload markers are incomplete.
+  if (end < 0) return;
 
   for (const block of blocks.slice(start, end + 1)) {
     await notionRequest(`/blocks/${block.id}`, {
@@ -131,9 +119,8 @@ async function deletePreviousPayload(pageId) {
 }
 
 async function appendPayload(pageId, video) {
-  const blocks = jsonBlocks(video);
+  const blocks = makePayloadBlocks(video);
 
-  // Append in batches to support large video plans.
   for (let i = 0; i < blocks.length; i += 100) {
     await notionRequest(`/blocks/${pageId}/children`, {
       method: "PATCH",
@@ -145,19 +132,17 @@ async function appendPayload(pageId, video) {
 }
 
 async function createPage(video) {
-  const databaseId = process.env.NOTION_DATABASE_ID;
-
   const page = await notionRequest("/pages", {
     method: "POST",
     body: JSON.stringify({
-      parent: { database_id: databaseId },
+      parent: {
+        database_id: process.env.NOTION_DATABASE_ID
+      },
       properties: {
         Name: {
-          title: [
-            {
-              text: { content: getTitle(video) }
-            }
-          ]
+          title: [{
+            text: { content: titleOf(video) }
+          }]
         }
       }
     })
@@ -168,72 +153,133 @@ async function createPage(video) {
 }
 
 async function updatePage(pageId, video) {
-  // Update the database title.
   await notionRequest(`/pages/${pageId}`, {
     method: "PATCH",
     body: JSON.stringify({
       properties: {
         Name: {
-          title: [
-            {
-              text: { content: getTitle(video) }
-            }
-          ]
+          title: [{
+            text: { content: titleOf(video) }
+          }]
         }
       }
     })
   });
 
-  // Replace only the payload section managed by this API.
-  await deletePreviousPayload(pageId);
+  await deleteManagedPayload(pageId);
   await appendPayload(pageId, video);
 }
 
+async function loadPlans() {
+  const databaseId = process.env.NOTION_DATABASE_ID;
+  const results = [];
+  let cursor;
+
+  do {
+    const body = { page_size: 100 };
+    if (cursor) body.start_cursor = cursor;
+
+    const data = await notionRequest(
+      `/databases/${databaseId}/query`,
+      {
+        method: "POST",
+        body: JSON.stringify(body)
+      }
+    );
+
+    results.push(...data.results);
+    cursor = data.has_more ? data.next_cursor : null;
+  } while (cursor);
+
+  const plans = [];
+
+  for (const page of results) {
+    const blocks = await getChildren(page.id);
+    const start = blocks.findIndex(
+      block => blockText(block) === START_MARKER
+    );
+
+    if (start < 0) continue;
+
+    const end = blocks.findIndex(
+      (block, index) =>
+        index > start && blockText(block) === END_MARKER
+    );
+
+    if (end < 0) continue;
+
+    const json = blocks.slice(start + 1, end)
+      .map(block => blockText(block))
+      .join("");
+
+    try {
+      const video = JSON.parse(json);
+      plans.push({
+        ...video,
+        notionPageId: page.id,
+        notionSync: true
+      });
+    } catch {
+      // Skip malformed payloads; continue loading other pages.
+    }
+  }
+
+  return plans;
+}
+
 export default async function handler(req, res) {
-  // CORS is needed when the HTML runs on a different origin.
   res.setHeader("Access-Control-Allow-Origin", "*");
-  res.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
+  res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
   res.setHeader("Access-Control-Allow-Headers", "Content-Type");
 
   if (req.method === "OPTIONS") {
     return res.status(204).end();
   }
 
-  if (req.method !== "POST") {
-    return res.status(405).json({
-      error: "Method not allowed"
-    });
-  }
-
-  if (!process.env.NOTION_TOKEN || !process.env.NOTION_DATABASE_ID) {
+  if (!process.env.NOTION_TOKEN ||
+      !process.env.NOTION_DATABASE_ID) {
     return res.status(500).json({
       error: "Missing NOTION_TOKEN or NOTION_DATABASE_ID"
     });
   }
 
   try {
-    const body = req.body || {};
-    const { video, pageId } = body;
-
-    if (!video || typeof video !== "object" || Array.isArray(video)) {
-      return res.status(400).json({
-        error: "A video object is required"
+    if (req.method === "GET") {
+      const plans = await loadPlans();
+      return res.status(200).json({
+        success: true,
+        plans
       });
     }
 
-    const savedPageId = pageId
-      ? (await updatePage(pageId, video), pageId)
-      : await createPage(video);
+    if (req.method === "POST") {
+      const { video, pageId } = req.body || {};
 
-    return res.status(200).json({
-      success: true,
-      pageId: savedPageId
+      if (!video || typeof video !== "object" ||
+          Array.isArray(video)) {
+        return res.status(400).json({
+          error: "A video object is required"
+        });
+      }
+
+      const savedPageId = pageId
+        ? (await updatePage(pageId, video), pageId)
+        : await createPage(video);
+
+      return res.status(200).json({
+        success: true,
+        pageId: savedPageId
+      });
+    }
+
+    return res.status(405).json({
+      error: "Method not allowed"
     });
   } catch (error) {
-    console.error("Notion sync failed:", error.message);
+    console.error("Notion API error:", error.message);
 
     return res.status(500).json({
-      error: error.message || "Notion synchronization failed"
+      error: error.message || "Notion API request failed"
     });
   }
 }

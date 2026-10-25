@@ -781,6 +781,7 @@
             />
             <div id="sres" role="listbox"></div>
           </div>
+          <button class="btn" data-act="loadnotion">Load from Notion</button>
           <button class="btn pri" data-act="newvideo">+ New video</button>
           <button class="btn" id="themeBtn" aria-label="Toggle dark mode">
             ◐
@@ -1339,7 +1340,8 @@
         UI = S.ui;
         document.documentElement.dataset.theme = S.settings.theme || "light";
       }
-      const NOTION_SYNC_ENDPOINT ="https://notiontemplate-theta.vercel.app/api/notion";
+      const NOTION_SYNC_ENDPOINT =
+        "https://notiontemplate-theta.vercel.app/api/notion";
       let notionSyncBusy = false,
         notionSyncAgain = false;
       async function syncNotionPlans() {
@@ -1387,6 +1389,66 @@
           if (notionSyncAgain) {
             notionSyncAgain = false;
             setTimeout(syncNotionPlans, 500);
+          }
+        }
+      }
+      async function loadNotionPlans() {
+        const btn = document.querySelector('[data-act="loadnotion"]');
+        if (btn) {
+          btn.disabled = true;
+          btn.textContent = "Loading…";
+        }
+        try {
+          const res = await fetch(NOTION_SYNC_ENDPOINT, { method: "GET" });
+          const data = await res.json().catch(() => ({}));
+          if (!res.ok)
+            throw new Error(data.error || `Load failed (${res.status})`);
+          const plans = Array.isArray(data.plans) ? data.plans : [];
+          let added = 0,
+            updated = 0;
+          for (const item of plans) {
+            if (!item.video || !item.pageId) continue;
+            const existing = S.videos.find(
+              (v) => v.notionPageId === item.pageId,
+            );
+            if (existing) {
+              Object.assign(existing, item.video, {
+                notionPageId: item.pageId,
+                notionSync: true,
+              });
+              updated++;
+            } else {
+              const v = item.video;
+              v.id = v.id || uid();
+              v.num = Number(v.num) || ++S.counter;
+              S.counter = Math.max(S.counter, Number(v.num) || 0);
+              v.sample = false;
+              v.notionSync = true;
+              v.notionPageId = item.pageId;
+              if (!v.idn)
+                v.idn = {
+                  working: v.title || v.name || "Imported Notion plan",
+                  vid: "V" + String(v.num).padStart(2, "0"),
+                  relation: "Standalone",
+                };
+              S.videos.push(v);
+              added++;
+            }
+          }
+          persist();
+          render();
+          toast(
+            `Loaded ${plans.length} Notion plans · ${added} added · ${updated} updated`,
+          );
+        } catch (e) {
+          toast(
+            "Could not load from Notion: " +
+              String(e.message || e).slice(0, 160),
+          );
+        } finally {
+          if (btn) {
+            btn.disabled = false;
+            btn.textContent = "Load from Notion";
           }
         }
       }
@@ -3676,6 +3738,9 @@ Begin with Stage 1.`;
             break;
           case "newvideo":
             createVideo();
+            break;
+          case "loadnotion":
+            loadNotionPlans();
             break;
           case "dup":
             dupVideo(id);
