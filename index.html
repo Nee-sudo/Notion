@@ -750,6 +750,62 @@
           transition: none !important;
         }
       }
+
+      .script-doc-editor {
+        min-height: 420px;
+        max-height: 75vh;
+        overflow: auto;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        padding: 28px 34px;
+        background: var(--bg);
+        color: var(--text);
+        line-height: 1.65;
+        outline: none;
+        box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
+      }
+      .script-doc-editor:focus {
+        border-color: var(--accent);
+        box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 18%, transparent);
+      }
+      .script-doc-editor h1,
+      .script-doc-editor h2,
+      .script-doc-editor h3 {
+        margin: 1.1em 0 0.45em;
+        line-height: 1.25;
+      }
+      .script-doc-editor p {
+        margin: 0.45em 0;
+      }
+      .script-doc-editor table {
+        border-collapse: collapse;
+        width: 100%;
+        margin: 14px 0;
+        table-layout: auto;
+      }
+      .script-doc-editor th,
+      .script-doc-editor td {
+        border: 1px solid var(--line);
+        padding: 7px 9px;
+        min-width: 55px;
+        vertical-align: top;
+      }
+      .script-doc-editor th {
+        background: var(--panel);
+        font-weight: 700;
+      }
+      .script-doc-editor ul,
+      .script-doc-editor ol {
+        padding-left: 28px;
+      }
+      .script-doc-editor img {
+        max-width: 100%;
+        height: auto;
+      }
+      .script-doc-editor .script-doc-placeholder {
+        color: var(--muted);
+        font-style: italic;
+      }
     </style>
   </head>
   <body>
@@ -3205,19 +3261,9 @@ Begin with Stage 1.`;
               ),
           ) +
           sec(
-            "D · Full plain-text script",
-            "Import a .docx, .txt or .md script, then view and edit the text below. Imported text replaces the current full draft only after confirmation.",
-            `<div class="grid g2" style="align-items:end"><div class="fld"><label for="scriptImportFile-${esc(v.id)}">Import script file (.docx, .txt, .md)</label><input id="scriptImportFile-${esc(v.id)}" type="file" accept=".docx,.txt,.md,text/plain,text/markdown,application/vnd.openxmlformats-officedocument.wordprocessingml.document" data-script-import="${esc(v.id)}"><div class="help">TXT and Markdown import directly. DOCX text extraction uses Mammoth.js from a CDN and needs internet access.</div></div><div class="fld"><label>&nbsp;</label><button class="btn" type="button" data-act="exportscript" data-id="${v.id}">Export current script (.txt)</button></div></div>` +
-              fld(
-                s + "fullDraft",
-                "Complete script draft — editable after import",
-                {
-                  type: "textarea",
-                  rows: 22,
-                  span: 1,
-                  help: "Imported text appears here. Edit it directly; changes are saved automatically.",
-                },
-              ),
+            "D · Script document",
+            "Import DOCX, TXT or Markdown. DOCX files open as an editable document view with headings, paragraphs, lists and tables retained where the file can be converted. Click inside the document to edit it; changes save automatically.",
+            `<div class="grid g2" style="align-items:end"><div class="fld"><label for="scriptImportFile-${esc(v.id)}">Import script file (.docx, .txt, .md)</label><input id="scriptImportFile-${esc(v.id)}" type="file" accept=".docx,.txt,.md,text/plain,text/markdown,application/vnd.openxmlformats-officedocument.wordprocessingml.document" data-script-import="${esc(v.id)}"><div class="help">DOCX formatting and tables are converted into an editable document view. Complex Word layouts may look different from Microsoft Word.</div></div><div class="fld"><label>&nbsp;</label><button class="btn" type="button" data-act="exportscript" data-id="${v.id}">Export current script (.txt)</button></div></div><div class="fld"><label>Editable document</label><div class="script-doc-editor" contenteditable="true" spellcheck="true" data-rich-script="${esc(v.id)}" role="textbox" aria-label="Editable imported script document" aria-multiline="true">${v.scr.fullDraftHtml || ((v.scr.fullDraft || "").trim() ? `<pre>${esc(v.scr.fullDraft)}</pre>` : `<p class="script-doc-placeholder">Import a DOCX, TXT or Markdown file, or click here and start writing.</p>`)}</div><div class="help">Edits are saved to this video plan in this browser. Tables can be edited cell by cell. Use the import control to replace the document.</div></div>`,
           ) +
           sec(
             "E · Optional section-by-section script",
@@ -3247,6 +3293,46 @@ Begin with Stage 1.`;
           `<div class="alert info">The prompt asks the AI to work in 5 stages and to stop for your approval after the outline.</div>${fld(P + "scr.prompt", "Prompt (editable)", { type: "textarea", rows: 26 })}<div class="row" style="margin-top:10px"><button class="btn pri" data-act="copyscr" data-id="${v.id}">📋 Copy AI Prompt</button><button class="btn" data-act="regenscr" data-id="${v.id}">↻ Regenerate from video data (overwrites edits)</button></div><p class="help">If the Copy button is blocked by your browser, a text box will appear so you can copy manually.</p>`,
         );
       }
+      function markdownToEditableHtml(markdown) {
+        const escHtml = (s) =>
+          String(s)
+            .replace(/&/g, "&amp;")
+            .replace(/</g, "&lt;")
+            .replace(/>/g, "&gt;")
+            .replace(/"/g, "&quot;");
+        const lines = String(markdown || "").split(/\r?\n/);
+        let out = [],
+          inList = false;
+        for (const line of lines) {
+          const h = line.match(/^(#{1,6})\s+(.*)$/);
+          const li = line.match(/^\s*[-*+]\s+(.*)$/);
+          const ol = line.match(/^\s*\d+[.)]\s+(.*)$/);
+          if (li || ol) {
+            if (!inList) {
+              out.push(li ? "<ul>" : "<ol>");
+              inList = li ? "ul" : "ol";
+            }
+            out.push(`<li>${escHtml((li || ol)[1])}</li>`);
+            continue;
+          }
+          if (inList) {
+            out.push(`</${inList}>`);
+            inList = false;
+          }
+          if (h)
+            out.push(`<h${h[1].length}>${escHtml(h[2])}</h${h[1].length}>`);
+          else if (/^\s*---+\s*$/.test(line)) out.push("<hr>");
+          else
+            out.push(line.trim() ? `<p>${escHtml(line)}</p>` : "<p><br></p>");
+        }
+        if (inList) out.push(`</${inList}>`);
+        return out.join("\n");
+      }
+      function editableHtmlToText(html) {
+        const d = document.createElement("div");
+        d.innerHTML = html;
+        return d.innerText || d.textContent || "";
+      }
       async function importScriptFile(file, videoId, input) {
         const v = vById(videoId);
         if (!v) {
@@ -3255,10 +3341,20 @@ Begin with Stage 1.`;
           return;
         }
         try {
-          let text = "";
+          let text = "",
+            html = "";
           const ext = (file.name.split(".").pop() || "").toLowerCase();
-          if (ext === "txt" || ext === "md") {
+          if (ext === "txt") {
             text = await file.text();
+            html = text
+              .split(/\r?\n/)
+              .map((line) =>
+                line.trim() ? `<p>${esc(line)}</p>` : "<p><br></p>",
+              )
+              .join("");
+          } else if (ext === "md") {
+            text = await file.text();
+            html = markdownToEditableHtml(text);
           } else if (ext === "docx") {
             if (!window.mammoth) {
               await new Promise((resolve, reject) => {
@@ -3276,10 +3372,13 @@ Begin with Stage 1.`;
               });
             }
             const buffer = await file.arrayBuffer();
-            const result = await window.mammoth.extractRawText({
+            const result = await window.mammoth.convertToHtml({
               arrayBuffer: buffer,
             });
-            text = result.value || "";
+            html = result.value || "";
+            text =
+              (await window.mammoth.extractRawText({ arrayBuffer: buffer }))
+                .value || "";
           } else {
             throw new Error(
               "Unsupported file type. Choose .docx, .txt or .md.",
@@ -3297,9 +3396,11 @@ Begin with Stage 1.`;
             return;
           }
           v.scr.fullDraft = text;
+          v.scr.fullDraftHtml = html || `<pre>${esc(text)}</pre>`;
+          v.scr.importedFileName = file.name;
           touch();
           render();
-          toast(`Imported ${file.name} into the full script draft.`);
+          toast(`Imported ${file.name} into the editable document view.`);
         } catch (err) {
           toast("Import failed: " + String(err.message || err).slice(0, 180));
         } finally {
@@ -3754,6 +3855,15 @@ Begin with Stage 1.`;
       }
       document.addEventListener("input", (e) => {
         const t = e.target;
+        if (t.dataset.richScript) {
+          const v = vById(t.dataset.richScript);
+          if (v) {
+            v.scr.fullDraftHtml = t.innerHTML;
+            v.scr.fullDraft = editableHtmlToText(t.innerHTML);
+            touch();
+          }
+          return;
+        }
         if (t.dataset.p) {
           let val = t.type === "checkbox" ? t.checked : t.value;
           if (t.dataset.lines)
