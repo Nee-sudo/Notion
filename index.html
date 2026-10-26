@@ -762,8 +762,8 @@
         </div>
         <nav class="nav" id="nav"></nav>
         <div class="note">
-          Saved in this browser, with optional Notion sync for newly created
-          plans. Use <b>Export</b> on the dashboard for backups.
+          Data is saved in this browser only (localStorage). It is not a cloud
+          backup — use <b>Export</b> on the dashboard regularly.
         </div>
       </aside>
       <div class="mainwrap">
@@ -781,7 +781,6 @@
             />
             <div id="sres" role="listbox"></div>
           </div>
-          <button class="btn" data-act="loadnotion">Load from Notion</button>
           <button class="btn pri" data-act="newvideo">+ New video</button>
           <button class="btn" id="themeBtn" aria-label="Toggle dark mode">
             ◐
@@ -845,6 +844,7 @@
         ["prompts", "🤖", "Reusable AI Prompts"],
       ];
       const TABS = [
+        ["planning", "Planning Worksheet"],
         ["identity", "Identity"],
         ["research", "Research"],
         ["packaging", "Title & Thumbnail"],
@@ -1298,6 +1298,7 @@
             vid: "V" + String(S.counter).padStart(2, "0"),
             relation: "Standalone",
           },
+          plan: {},
           goal: {},
           prem: {},
           refs: [],
@@ -1308,7 +1309,16 @@
           jr: [],
           mine: {},
           prod: { checks: {}, shots: [] },
-          an: { snaps: [], advice: [], ret: [], q: {}, dx: {} },
+          an: {
+            url: "",
+            graph: "",
+            graphNote: "",
+            snaps: [],
+            advice: [],
+            ret: [],
+            q: {},
+            dx: {},
+          },
           next: { fix: [], keep: [], test: [] },
         };
       }
@@ -1336,146 +1346,9 @@
         }
         const d = blankState();
         for (const k in d) if (S[k] == null) S[k] = d[k];
-        if (!Array.isArray(S.videos)) S.videos = [];
-        if (!Array.isArray(S.lessons)) S.lessons = [];
-        if (!Array.isArray(S.promises)) S.promises = [];
-        if (!Array.isArray(S.experiments)) S.experiments = [];
-        if (!Array.isArray(S.ideas)) S.ideas = [];
-        S.videos = S.videos.map(v => {
-          if (!v || typeof v !== "object") return newVideo("Recovered");
-          v.idn = v.idn || { working: v.title || v.name || "Untitled", relation: "Standalone" };
-          v.stages = Array.isArray(v.stages) ? v.stages : Array(15).fill(false);
-          v.goal = v.goal || {};
-          v.prem = v.prem || {};
-          v.refs = Array.isArray(v.refs) ? v.refs : [];
-          v.insp = v.insp || {};
-          v.val = Object.assign({ scores: {} }, v.val || {});
-          v.pkg = Object.assign({ titles: [], checks: {} }, v.pkg || {});
-          v.scr = Object.assign({ outline: [], sections: [] }, v.scr || {});
-          v.jr = Array.isArray(v.jr) ? v.jr : [];
-          v.mine = v.mine || {};
-          v.prod = Object.assign({ checks: {}, shots: [] }, v.prod || {});
-          v.an = Object.assign({ snaps: [], advice: [], ret: [], q: {}, dx: {} }, v.an || {});
-          v.next = Object.assign({ fix: [], keep: [], test: [] }, v.next || {});
-          v.id = v.id || uid();
-          v.status = v.status || "Idea";
-          return v;
-        });
         S.settings = Object.assign({}, d.settings, S.settings);
         UI = S.ui;
         document.documentElement.dataset.theme = S.settings.theme || "light";
-      }
-      const NOTION_SYNC_ENDPOINT =
-        "https://notiontemplate-theta.vercel.app/api/notion";
-      let notionSyncBusy = false,
-        notionSyncAgain = false;
-      async function syncNotionPlans() {
-        if (notionSyncBusy) {
-          notionSyncAgain = true;
-          return;
-        }
-        const pending = S.videos.filter(
-          (v) => v.notionSync === true && !v.sample,
-        );
-        if (!pending.length) return;
-        notionSyncBusy = true;
-        try {
-          for (const v of pending) {
-            const res = await fetch(NOTION_SYNC_ENDPOINT, {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({
-                video: v,
-                pageId: v.notionPageId || null,
-              }),
-            });
-            const data = await res.json().catch(() => ({}));
-            if (!res.ok)
-              throw new Error(
-                data.error || `Notion sync failed (${res.status})`,
-              );
-            if (data.pageId && v.notionPageId !== data.pageId) {
-              v.notionPageId = data.pageId;
-              localStorage.setItem(KEY, JSON.stringify(S));
-            }
-          }
-          $("#saved").textContent =
-            "Saved + synced to Notion " +
-            new Date().toLocaleTimeString([], {
-              hour: "2-digit",
-              minute: "2-digit",
-            });
-        } catch (e) {
-          $("#saved").textContent =
-            "Saved locally · Notion sync error: " +
-            String(e.message || e).slice(0, 90);
-        } finally {
-          notionSyncBusy = false;
-          if (notionSyncAgain) {
-            notionSyncAgain = false;
-            setTimeout(syncNotionPlans, 500);
-          }
-        }
-      }
-      async function loadNotionPlans() {
-        const btn = document.querySelector('[data-act="loadnotion"]');
-        if (btn) {
-          btn.disabled = true;
-          btn.textContent = "Loading…";
-        }
-        try {
-          const res = await fetch(NOTION_SYNC_ENDPOINT, { method: "GET" });
-          const data = await res.json().catch(() => ({}));
-          if (!res.ok)
-            throw new Error(data.error || `Load failed (${res.status})`);
-          const plans = Array.isArray(data.plans) ? data.plans : [];
-          let added = 0,
-            updated = 0;
-          for (const item of plans) {
-            if (!item.video || !item.pageId) continue;
-            const existing = S.videos.find(
-              (v) => v.notionPageId === item.pageId,
-            );
-            if (existing) {
-              Object.assign(existing, item.video, {
-                notionPageId: item.pageId,
-                notionSync: true,
-              });
-              updated++;
-            } else {
-              const v = item.video;
-              v.id = v.id || uid();
-              v.num = Number(v.num) || ++S.counter;
-              S.counter = Math.max(S.counter, Number(v.num) || 0);
-              v.sample = false;
-              v.notionSync = true;
-              v.notionPageId = item.pageId;
-              if (!v.idn)
-                v.idn = {
-                  working: v.title || v.name || "Imported Notion plan",
-                  vid: "V" + String(v.num).padStart(2, "0"),
-                  relation: "Standalone",
-                };
-              S.videos.push(v);
-              added++;
-            }
-          }
-          persist();
-          render();
-          toast(
-            `Loaded ${plans.length} Notion plans · ${added} added · ${updated} updated`,
-          );
-        } catch (e) {
-          toast(
-            "Could not load from Notion: " +
-              String(e.message || e).slice(0, 160),
-          );
-        } finally {
-          if (btn) {
-            btn.disabled = false;
-            btn.textContent = "Load from Notion";
-          }
-        }
       }
       function persist() {
         try {
@@ -1486,8 +1359,6 @@
               hour: "2-digit",
               minute: "2-digit",
             });
-          if (S.videos.some((v) => v.notionSync === true && !v.sample))
-            setTimeout(syncNotionPlans, 250);
         } catch (e) {
           memOnly = true;
           $("#saved").textContent =
@@ -1691,6 +1562,23 @@
             b = num(r.subs);
           el.textContent = a != null && b ? (a / b).toFixed(2) + "×" : "—";
         },
+        viewsday(el) {
+          const r = get(el.dataset.path)[el.dataset.i];
+          const views = num(r.views),
+            pub = r.pub ? new Date(r.pub + "T00:00:00") : null;
+          const age =
+            pub && !Number.isNaN(pub.getTime())
+              ? Math.floor(
+                  (new Date().setHours(0, 0, 0, 0) - pub.getTime()) / 86400000,
+                )
+              : null;
+          el.textContent =
+            views != null && age !== null && age > 0
+              ? fmtN(Math.round(views / age)) + " / day"
+              : age === 0
+                ? "Uploaded today"
+                : "Add views + upload date";
+        },
         prog(el) {
           const v = S.videos[el.dataset.i];
           const p = chkProg(
@@ -1810,7 +1698,7 @@
           journal: L(
             v.jr,
             (e) =>
-              `[${e.date || "?"}${e.day ? " / " + e.day : ""}]${(e.tags || []).length ? " (" + e.tags.join(", ") + ")" : ""} Planned: ${nz(e.planned)} | Did: ${nz(e.did)} | Proof: ${nz(e.proof)} | Metric: ${nz(e.metric)} | Unexpected: ${nz(e.unexpected)} | Problem: ${nz(e.problem)} | Mistake: ${nz(e.mistake)} | Learned: ${nz(e.learned)} | Decision: ${nz(e.decision)} | Strategy change: ${nz(e.strategy)} | Emotion: ${nz(e.emotion)} | Why it mattered: ${nz(e.why)} | Surprised: ${nz(e.surprised)} | Footage: ${nz(e.footage)} ${e.fpath || ""} | Reflection: ${nz(e.reflection)} | Notes: ${nz(e.notes)}`,
+              `[${e.date || "?"}${e.day ? " / " + e.day : ""}]${(e.tags || []).length ? " (" + e.tags.join(", ") + ")" : ""} Full-day diary: ${nz(e.diary)} | Planned: ${nz(e.planned)} | Did: ${nz(e.did)} | Proof: ${nz(e.proof)} | Metric: ${nz(e.metric)} | Unexpected: ${nz(e.unexpected)} | Problem: ${nz(e.problem)} | Mistake: ${nz(e.mistake)} | Learned: ${nz(e.learned)} | Decision: ${nz(e.decision)} | Strategy change: ${nz(e.strategy)} | Emotion: ${nz(e.emotion)} | Why it mattered: ${nz(e.why)} | Surprised: ${nz(e.surprised)} | Footage: ${nz(e.footage)} ${e.fpath || ""} | Reflection: ${nz(e.reflection)} | Notes: ${nz(e.notes)}`,
           ),
           mining: MINE_Q.map((q, k) => `${q}: ${nz(m["q" + k])}`).join("\n"),
           outline: L(
@@ -1818,6 +1706,7 @@
             (r, k) =>
               `${k + 1}. ${nz(r.beat)} (${nz(r.dur)} min) — purpose: ${nz(r.purpose)}; what happened: ${nz(r.happened)}; evidence: ${nz(r.evidence)}; narration: ${nz(r.narration)}; visuals: ${nz(r.visuals)}`,
           ),
+          fullDraft: nz(sc.fullDraft),
           script: L(
             sc.sections,
             (s, k) =>
@@ -1932,19 +1821,47 @@ ${d.promises}
 ## 18. Required narrative structure / current outline
 ${d.outline}
 
-## 19. Existing script sections
+## 19. Full plain-text script draft
+${d.fullDraft}
+
+## 20. Existing script sections
 ${d.script}
 
-## 20. Desired duration
+## 21. Desired duration
 ${nz(v.scr && v.scr.duration)}
 
-## 21. Available footage
+## 22. Available footage
 ${d.shots}
 
-## 22. My natural speaking style
+## 23. My natural speaking style
 ${d.voice}
 
-## 16. Hard constraints
+## 24. My Notion-style planning worksheet
+Brainstorm: ${nz(v.plan && v.plan.brainstorm)}
+Thumbnail idea: ${nz(v.plan && v.plan.thumbnailIdea)}
+Previous-video promise: ${nz(v.plan && v.plan.promise)}
+How this video fulfils it: ${nz(v.plan && v.plan.fulfil)}
+Upload date: ${nz(v.plan && v.plan.uploadDate)}
+Footage already recorded: ${nz(v.plan && v.plan.captured)}
+Work already completed / product built: ${nz(v.plan && v.plan.built)}
+Footage still needed: ${nz(v.plan && v.plan.needRecord)}
+Content I can record now: ${nz(v.plan && v.plan.availableNow)}
+Previous script / structure: ${nz(v.plan && v.plan.previousScript)}
+Previous script format: ${nz(v.plan && v.plan.previousFormat)}
+What to fix next: ${nz(v.plan && v.plan.fixNext)}
+Observed audience drop-off: ${nz(v.plan && v.plan.lostInterest)}
+Supporting retention evidence: ${nz(v.plan && v.plan.retentionEvidence)}
+Planned editing / pattern interrupt test: ${nz(v.plan && v.plan.change)}
+Selected script format: ${nz(v.plan && v.plan.scriptFormat)}
+Target duration: ${nz(v.plan && v.plan.duration)}
+Viewer promise: ${nz(v.plan && v.plan.centralPromise)}
+Opening: ${nz(v.plan && v.plan.hook)}
+Real demonstration / proof: ${nz(v.plan && v.plan.demo)}
+Payoff and CTA: ${nz(v.plan && v.plan.ending)}
+
+Treat this worksheet as creator-provided context. Do not infer missing facts. If it conflicts with measured analytics or documented footage, flag the conflict and ask me to resolve it.
+
+## 25. Hard constraints
 - Do NOT invent dialogue, emotions, failures, achievements, numbers or events I did not report.
 - Do NOT add artificial conflict. If the material has no crisis or breakthrough, say so.
 - Mark every missing fact as [MISSING: …] and ask me for it.
@@ -2145,10 +2062,8 @@ Begin with Stage 1.`;
                 return;
               }
               const v = newVideo(t);
-              v.notionSync = true;
               S.videos.push(v);
               c();
-              touch();
               openVideo(v.id, "research");
             };
             $("[data-x=no]", m).onclick = c;
@@ -2167,8 +2082,6 @@ Begin with Stage 1.`;
         c.num = S.counter;
         c.created = Date.now();
         c.sample = false;
-        c.notionSync = true;
-        delete c.notionPageId;
         c.status = "Idea";
         c.stages = Array(15).fill(false);
         c.idn.working = (c.idn.working || "Untitled") + " (copy)";
@@ -2289,6 +2202,7 @@ Begin with Stage 1.`;
               status: "Idea",
               stages: Array(15).fill(false),
               idn: {},
+              plan: {},
               goal: {},
               prem: {},
               refs: [],
@@ -2299,11 +2213,21 @@ Begin with Stage 1.`;
               jr: [],
               mine: {},
               prod: { checks: {}, shots: [] },
-              an: { snaps: [], advice: [], ret: [], q: {}, dx: {} },
+              an: {
+                url: "",
+                graph: "",
+                graphNote: "",
+                snaps: [],
+                advice: [],
+                ret: [],
+                q: {},
+                dx: {},
+              },
               next: { fix: [], keep: [], test: [] },
             },
             v,
           );
+          if (!x.plan) x.plan = {};
           x.idn = Object.assign(
             { working: "", relation: "Standalone" },
             x.idn || {},
@@ -2665,6 +2589,16 @@ Begin with Stage 1.`;
         S.videos.forEach((v) =>
           (v.an.snaps || []).forEach((s) => rows.push([v, s])),
         );
+        const graphVideos = S.videos.filter(
+          (v) => !v.archived && ((v.an && v.an.graph) || (v.an && v.an.url)),
+        );
+        const graphGallery = sec(
+          "Retention graph gallery",
+          "Add a screenshot of each video's YouTube Studio audience-retention graph in that video's Analytics tab. This gallery puts your graphs, video titles, and links together for visual comparison. Graph screenshots are stored in this browser's local storage; use small images to avoid storage limits.",
+          graphVideos.length
+            ? `<div class="grid g3">${graphVideos.map((v) => `<article class="card" style="padding:10px;overflow:hidden"><div style="font-weight:650;margin-bottom:6px">${esc(vLabel(v))}</div>${v.an.graph ? `<img src="${v.an.graph}" alt="Retention graph for ${esc(vTitle(v))}" style="display:block;width:100%;aspect-ratio:16/9;object-fit:contain;background:var(--soft);border-radius:8px">` : `<div class="empty">No graph screenshot uploaded</div>`}${v.an.url ? `<p style="margin:8px 0"><a href="${esc(v.an.url)}" target="_blank" rel="noopener noreferrer">Open YouTube video ↗</a></p>` : ""}${v.an.graphNote ? `<p class="sub">${esc(v.an.graphNote)}</p>` : ""}<button class="btn sm" data-act="open" data-id="${v.id}" data-tab="analytics">Edit analytics →</button></article>`).join("")}</div>`
+            : `<div class="empty">No retention graphs added yet. Open a video → Analytics → upload its graph screenshot and add the YouTube link.</div>`,
+        );
         return (
           summaryList(
             "Published Video Analytics",
@@ -2684,6 +2618,7 @@ Begin with Stage 1.`;
             ["Latest snapshot", "CTR", "Avg % viewed", "Retention notes"],
           ) +
           `<div class="alert info">Analytics are not fetched automatically. Copy numbers from YouTube Studio into each video's Analytics tab.</div>` +
+          graphGallery +
           (rows.length
             ? sec(
                 "Snapshot comparison",
@@ -2977,6 +2912,7 @@ Begin with Stage 1.`;
         const idx = vIdx(v.id),
           P = `videos.${idx}.`;
         const T = {
+          planning: tPlanning,
           identity: tIdentity,
           research: tResearch,
           packaging: tPackaging,
@@ -2994,6 +2930,57 @@ Begin with Stage 1.`;
  <div style="margin-top:12px">${stageTracker(v)}</div>
  <div class="tabs" role="tablist">${TABS.map(([k, l]) => `<button role="tab" class="${UI.tab === k ? "on" : ""}" aria-selected="${UI.tab === k}" data-act="tab" data-tab="${k}">${l}</button>`).join("")}</div>${T(v, P, idx)}`;
       };
+      function tPlanning(v, P) {
+        const p = P + "plan.";
+        return (
+          sec(
+            "1 · Brainstorm and promise",
+            "Start with the actual idea and any promise made in an earlier video. Keep this worksheet question-driven, like your existing Notion template.",
+            `<div class="grid g2">${fld(p + "brainstorm", "What is the video about? What is the interesting angle?", { type: "textarea", rows: 3 })}${fld(p + "thumbnailIdea", "Suggested thumbnail / visual idea", { type: "textarea", rows: 3 })}${fld(p + "promised", "Did I promise something in the last video?", { type: "select", opts: ["Yes", "No", "Not sure"] })}${fld(p + "promise", "What exactly did I promise?", { type: "textarea", rows: 2 })}${fld(p + "fulfil", "What am I doing in this video to fulfil that promise?", { type: "textarea", rows: 2 })}${fld(p + "uploadDate", "When am I going to upload?", { type: "date" })}</div>`,
+          ) +
+          sec(
+            "2 · What content do I already have?",
+            "List footage, app demos, real work, and missing shots. Do not write a script that assumes footage exists when it does not.",
+            `<div class="grid g2">${fld(p + "captured", "What content have I recorded till now?", { type: "textarea", rows: 4 })}${fld(p + "built", "What have I already built / completed?", { type: "textarea", rows: 4 })}${fld(p + "needRecord", "What do I still need to record?", { type: "textarea", rows: 4 })}${fld(p + "availableNow", "What useful content can I record right now?", { type: "textarea", rows: 4 })}</div>`,
+          ) +
+          sec(
+            "3 · Learn from the previous video",
+            "Use the actual script, format, Studio metrics and retention observations where available. Keep guesses separate from evidence.",
+            `<div class="grid g2">${fld(p + "previousScript", "What was the script / structure of my last video?", { type: "textarea", rows: 4 })}${fld(p + "previousFormat", "What script format did I follow last time?", { type: "textarea", rows: 3 })}${fld(p + "fixNext", "What should I fix or avoid repeating in this video?", { type: "textarea", rows: 3 })}${fld(p + "lostInterest", "Where did viewers lose interest, and what was happening there?", { type: "textarea", rows: 3 })}${fld(p + "retentionEvidence", "What retention or Studio evidence supports this observation?", { type: "textarea", rows: 3 })}${fld(p + "change", "What specific edit, cut, visual change or pattern interrupt will I test?", { type: "textarea", rows: 3 })}</div><div class="alert info">A retention drop shows where viewers left, not automatically why. Record the timestamp and what happened, then treat the explanation as a hypothesis.</div>`,
+          ) +
+          sec(
+            "4 · Script and execution decisions",
+            "Choose the story structure before writing the full script.",
+            `<div class="grid g2">${fld(p + "scriptFormat", "Which script format will I follow?", { type: "select", opts: VFORMATS })}${fld(p + "duration", "Target video duration", { ph: "e.g. 2–3 minutes" })}${fld(p + "centralPromise", "What will the viewer get from this video?", { type: "textarea", rows: 2 })}${fld(p + "hook", "What happens in the first 5–10 seconds?", { type: "textarea", rows: 2 })}${fld(p + "demo", "What real demonstration or proof will I show?", { type: "textarea", rows: 3 })}${fld(p + "ending", "What is the payoff and one closing CTA?", { type: "textarea", rows: 2 })}</div>`,
+          ) +
+          sec(
+            "5 · Ready-to-film checklist",
+            "Use this as the quick practical plan. Detailed shot tracking remains available in the Production tab.",
+            `<div class="grid g2">${[
+              ["titleReady", "Working title and thumbnail promise are clear"],
+              [
+                "promiseReady",
+                "Previous-video promise is addressed or explained",
+              ],
+              [
+                "hookReady",
+                "Opening delivers value without delaying the promised answer",
+              ],
+              ["demoReady", "Actual product / project footage is ready"],
+              ["shotsReady", "Missing shots are listed"],
+              ["formatReady", "Script format and target duration are selected"],
+              [
+                "evidenceReady",
+                "Claims have footage, data or another real source",
+              ],
+              ["ctaReady", "One natural closing CTA is chosen"],
+            ]
+              .map(([k, l]) => chk(p + k, l))
+              .join("")}</div>`,
+          )
+        );
+      }
+
       function tIdentity(v, P) {
         const i = P + "idn.";
         return (
@@ -3020,7 +3007,7 @@ Begin with Stage 1.`;
           i,
           esc(r.title || "New reference video") +
             ` <span class="help">${esc(r.channel || "")}</span>`,
-          `<div class="alert info">A high view count alone doesn't prove the topic caused success — consider channel size, date, format and other explanations.</div><div class="grid g3">${fld(p + "creator", "Creator / YouTuber")}${fld(p + "channel", "Channel")}${fld(p + "title", "Video title")}${fld(p + "url", "Video URL", { type: "url" })}${fld(p + "pub", "Publication date", { type: "date" })}${fld(p + "views", "Current views", { type: "num" })}${fld(p + "subs", "Subscribers (if known)", { type: "num" })}${fld(p + "len", "Video length")}<div class="fld"><label>View-to-subscriber ratio</label><div style="padding:7px 0"><b data-calc="ratio" data-path="${P}refs" data-i="${i}"></b> <span class="help">only meaningful with reliable numbers</span></div></div></div><div class="grid g2" style="margin-top:10px">${fld(p + "titleStruct", "Title structure", { type: "textarea", rows: 2 })}${fld(p + "thumb", "Thumbnail concept", { type: "textarea", rows: 2 })}${fld(p + "hook", "Opening hook", { type: "textarea", rows: 2 })}${fld(p + "premise", "Main premise", { type: "textarea", rows: 2 })}${fld(p + "structure", "Storytelling structure", { type: "textarea", rows: 2 })}${fld(p + "conflict", "Main conflict", { type: "textarea", rows: 2 })}${fld(p + "turning", "Turning points", { type: "textarea", rows: 2 })}${fld(p + "payoff", "Final payoff", { type: "textarea", rows: 2 })}${fld(p + "comments", "Viewer comments & common complaints", { type: "textarea", rows: 2 })}${fld(p + "valued", "What viewers seem to value", { type: "textarea", rows: 2 })}${fld(p + "didWell", "What the creator did well", { type: "textarea", rows: 2 })}${fld(p + "missing", "What's missing / could improve", { type: "textarea", rows: 2 })}${fld(p + "facts", "Observed FACTS", { type: "textarea", help: "Things you can point to on the page." })}${fld(p + "interp", "My INTERPRETATION", { type: "textarea", help: "Guesses about why it worked." })}${fld(p + "learn", "What I can learn from it", { type: "textarea", span: 1 })}</div>`,
+          `<div class="alert info">A high view count alone doesn't prove the topic caused success — consider channel size, date, format and other explanations.</div><div class="grid g3">${fld(p + "creator", "Creator / YouTuber")}${fld(p + "channel", "Channel")}${fld(p + "title", "Video title")}${fld(p + "url", "Video URL", { type: "url" })}${fld(p + "pub", "Publication date", { type: "date" })}${fld(p + "views", "Current views", { type: "num" })}${fld(p + "subs", "Subscribers (if known)", { type: "num" })}${fld(p + "len", "Video duration", { ph: "e.g. 12:40" })}<div class="fld"><label>Approx. views per day</label><div style="padding:7px 0"><b data-calc="viewsday" data-path="${P}refs" data-i="${i}"></b></div><div class="help">Estimated from total views ÷ days since upload.</div></div><div class="fld"><label>View-to-subscriber ratio</label><div style="padding:7px 0"><b data-calc="ratio" data-path="${P}refs" data-i="${i}"></b> <span class="help">only meaningful with reliable numbers</span></div></div></div><div class="grid g2" style="margin-top:10px">${fld(p + "titleStruct", "Title structure", { type: "textarea", rows: 2 })}${fld(p + "thumb", "Thumbnail concept", { type: "textarea", rows: 2 })}${fld(p + "hook", "Opening hook", { type: "textarea", rows: 2 })}${fld(p + "premise", "Main premise", { type: "textarea", rows: 2 })}${fld(p + "structure", "Storytelling structure", { type: "textarea", rows: 2 })}${fld(p + "conflict", "Main conflict", { type: "textarea", rows: 2 })}${fld(p + "turning", "Turning points", { type: "textarea", rows: 2 })}${fld(p + "payoff", "Final payoff", { type: "textarea", rows: 2 })}${fld(p + "comments", "Viewer comments & common complaints", { type: "textarea", rows: 2 })}${fld(p + "valued", "What viewers seem to value", { type: "textarea", rows: 2 })}${fld(p + "didWell", "What the creator did well", { type: "textarea", rows: 2 })}${fld(p + "missing", "What's missing / could improve", { type: "textarea", rows: 2 })}${fld(p + "facts", "Observed FACTS", { type: "textarea", help: "Things you can point to on the page." })}${fld(p + "interp", "My INTERPRETATION", { type: "textarea", help: "Guesses about why it worked." })}${fld(p + "learn", "What I can learn from it", { type: "textarea", span: 1 })}</div>`,
         );
       }
       function tResearch(v, P, idx) {
@@ -3033,7 +3020,7 @@ Begin with Stage 1.`;
         ).join("");
         const cmp =
           (v.refs || []).length > 1
-            ? `<div class="tw"><table class="t plain"><thead><tr><th>Video</th><th>Channel</th><th>Views</th><th>Subs</th><th>Ratio</th><th>Length</th><th>Title structure</th><th>Hook</th><th>Payoff</th></tr></thead><tbody>${v.refs.map((r, i) => `<tr><td>${esc(r.title || "")}</td><td>${esc(r.channel || "")}</td><td>${fmtN(num(r.views))}</td><td>${fmtN(num(r.subs))}</td><td><span data-calc="ratio" data-path="${P}refs" data-i="${i}"></span></td><td>${esc(r.len || "")}</td><td>${esc(r.titleStruct || "")}</td><td>${esc(r.hook || "")}</td><td>${esc(r.payoff || "")}</td></tr>`).join("")}</tbody></table></div>`
+            ? `<div class="tw"><table class="t plain"><thead><tr><th>Video</th><th>Channel</th><th>Uploaded</th><th>Views</th><th>Approx. views/day</th><th>Subs</th><th>Ratio</th><th>Duration</th><th>Title structure</th><th>Hook</th><th>Payoff</th></tr></thead><tbody>${v.refs.map((r, i) => `<tr><td>${r.url ? `<a href="${esc(r.url)}" target="_blank" rel="noopener noreferrer">${esc(r.title || "Open reference")}</a>` : esc(r.title || "")}</td><td>${esc(r.channel || "")}</td><td>${esc(r.pub || "—")}</td><td>${fmtN(num(r.views))}</td><td><span data-calc="viewsday" data-path="${P}refs" data-i="${i}"></span></td><td>${fmtN(num(r.subs))}</td><td><span data-calc="ratio" data-path="${P}refs" data-i="${i}"></span></td><td>${esc(r.len || "")}</td><td>${esc(r.titleStruct || "")}</td><td>${esc(r.hook || "")}</td><td>${esc(r.payoff || "")}</td></tr>`).join("")}</tbody></table></div>`
             : "";
         return (
           sec(
@@ -3075,7 +3062,7 @@ Begin with Stage 1.`;
           ) +
           sec(
             "C · Reference videos",
-            "Add several and compare. Keep observed facts separate from your interpretation.",
+            "Add several and compare. Record the title, clickable link, current views, upload date and duration. Approximate views/day helps contextualize total views; it is not a prediction of future performance. Keep observed facts separate from your interpretation.",
             (v.refs.length
               ? v.refs.map((r, i) => refCard(v, P, i)).join("")
               : `<div class="empty">No reference videos yet.</div>`) +
@@ -3218,22 +3205,37 @@ Begin with Stage 1.`;
               ),
           ) +
           sec(
-            "D · Actual script",
-            "Don't invent dialogue, feelings, failures, achievements, statistics or events. Mark gaps and fill them yourself.",
+            "D · Full plain-text script",
+            "Import a .docx, .txt or .md script, then view and edit the text below. Imported text replaces the current full draft only after confirmation.",
+            `<div class="grid g2" style="align-items:end"><div class="fld"><label for="scriptImportFile-${esc(v.id)}">Import script file (.docx, .txt, .md)</label><input id="scriptImportFile-${esc(v.id)}" type="file" accept=".docx,.txt,.md,text/plain,text/markdown,application/vnd.openxmlformats-officedocument.wordprocessingml.document" data-script-import="${esc(v.id)}"><div class="help">TXT and Markdown import directly. DOCX text extraction uses Mammoth.js from a CDN and needs internet access.</div></div><div class="fld"><label>&nbsp;</label><button class="btn" type="button" data-act="exportscript" data-id="${v.id}">Export current script (.txt)</button></div></div>` +
+              fld(
+                s + "fullDraft",
+                "Complete script draft — editable after import",
+                {
+                  type: "textarea",
+                  rows: 22,
+                  span: 1,
+                  help: "Imported text appears here. Edit it directly; changes are saved automatically.",
+                },
+              ),
+          ) +
+          sec(
+            "E · Optional section-by-section script",
+            "Use this only if you want to organize narration, footage and on-screen text by section.",
             (v.scr.sections.length
               ? v.scr.sections
                   .map((x, i) =>
                     card(
                       P + "scr.sections",
                       i,
-                      `${i + 1}. ${esc(x.title || "Section")} <span class="help">${esc(x.dur || "")} min</span>`,
-                      `<div class="grid g2">${fld(`${s}sections.${i}.title`, "Section title")}${fld(`${s}sections.${i}.dur`, "Approx. duration (min)")}${fld(`${s}sections.${i}.narration`, "Narration", { type: "textarea", rows: 7, span: 1 })}${fld(`${s}sections.${i}.footage`, "Relevant footage", { type: "textarea", rows: 2 })}${fld(`${s}sections.${i}.screen`, "Screen recordings / demos", { type: "textarea", rows: 2 })}${fld(`${s}sections.${i}.text`, "On-screen text", { type: "textarea", rows: 2 })}${fld(`${s}sections.${i}.music`, "Music / sound cues", { type: "textarea", rows: 2 })}${fld(`${s}sections.${i}.trans`, "Transitions", { type: "textarea", rows: 2 })}${fld(`${s}sections.${i}.evidence`, "Evidence supporting the narration", { type: "textarea", rows: 2 })}</div>`,
+                      `${i + 1}. ${esc(x.title || "Section")} <span class=\"help\">${esc(x.dur || "")} min</span>`,
+                      `<div class=\"grid g2\">${fld(`${s}sections.${i}.title`, "Section title")}${fld(`${s}sections.${i}.dur`, "Approx. duration (min)")}${fld(`${s}sections.${i}.narration`, "Narration", { type: "textarea", rows: 7, span: 1 })}${fld(`${s}sections.${i}.footage`, "Relevant footage", { type: "textarea", rows: 2 })}${fld(`${s}sections.${i}.screen`, "Screen recordings / demos", { type: "textarea", rows: 2 })}${fld(`${s}sections.${i}.text`, "On-screen text", { type: "textarea", rows: 2 })}${fld(`${s}sections.${i}.music`, "Music / sound cues", { type: "textarea", rows: 2 })}${fld(`${s}sections.${i}.trans`, "Transitions", { type: "textarea", rows: 2 })}${fld(`${s}sections.${i}.evidence`, "Evidence supporting the narration", { type: "textarea", rows: 2 })}</div>`,
                     ),
                   )
                   .join("")
-              : `<div class="empty">No script sections yet.</div>`) +
+              : `<div class=\"empty\">No script sections yet.</div>`) +
               addBtn(P + "scr.sections", "sec", "Add script section") +
-              `<div class="grid g2" style="margin-top:12px">${fld(s + "voice", "My natural vocabulary, expressions and speaking style", { type: "textarea", rows: 4, help: "Paste a few sentences you'd naturally say aloud so the AI matches your voice." })}${fld(s + "missing", "Missing facts that need my input", { type: "textarea", rows: 4 })}</div>`,
+              `<div class=\"grid g2\" style=\"margin-top:12px\">${fld(s + "voice", "My natural vocabulary, expressions and speaking style", { type: "textarea", rows: 4, help: "Paste a few sentences you'd naturally say aloud so the AI matches your voice." })}${fld(s + "missing", "Missing facts that need my input", { type: "textarea", rows: 4 })}</div>`,
           )
         );
       }
@@ -3245,11 +3247,125 @@ Begin with Stage 1.`;
           `<div class="alert info">The prompt asks the AI to work in 5 stages and to stop for your approval after the outline.</div>${fld(P + "scr.prompt", "Prompt (editable)", { type: "textarea", rows: 26 })}<div class="row" style="margin-top:10px"><button class="btn pri" data-act="copyscr" data-id="${v.id}">📋 Copy AI Prompt</button><button class="btn" data-act="regenscr" data-id="${v.id}">↻ Regenerate from video data (overwrites edits)</button></div><p class="help">If the Copy button is blocked by your browser, a text box will appear so you can copy manually.</p>`,
         );
       }
+      async function importScriptFile(file, videoId, input) {
+        const v = vById(videoId);
+        if (!v) {
+          toast("Could not find the selected video.");
+          input.value = "";
+          return;
+        }
+        try {
+          let text = "";
+          const ext = (file.name.split(".").pop() || "").toLowerCase();
+          if (ext === "txt" || ext === "md") {
+            text = await file.text();
+          } else if (ext === "docx") {
+            if (!window.mammoth) {
+              await new Promise((resolve, reject) => {
+                const script = document.createElement("script");
+                script.src =
+                  "https://unpkg.com/mammoth@1.8.0/mammoth.browser.min.js";
+                script.onload = resolve;
+                script.onerror = () =>
+                  reject(
+                    new Error(
+                      "Could not load the DOCX reader. Check your internet connection or save the document as .txt or .md.",
+                    ),
+                  );
+                document.head.appendChild(script);
+              });
+            }
+            const buffer = await file.arrayBuffer();
+            const result = await window.mammoth.extractRawText({
+              arrayBuffer: buffer,
+            });
+            text = result.value || "";
+          } else {
+            throw new Error(
+              "Unsupported file type. Choose .docx, .txt or .md.",
+            );
+          }
+          if (!text.trim())
+            throw new Error("No readable text was found in this file.");
+          if (
+            (v.scr.fullDraft || "").trim() &&
+            !confirm(
+              "Replace the current full script draft with the imported file? Your existing draft will be replaced.",
+            )
+          ) {
+            input.value = "";
+            return;
+          }
+          v.scr.fullDraft = text;
+          touch();
+          render();
+          toast(`Imported ${file.name} into the full script draft.`);
+        } catch (err) {
+          toast("Import failed: " + String(err.message || err).slice(0, 180));
+        } finally {
+          input.value = "";
+        }
+      }
+
+      function inferJournalTags(e) {
+        const text = [
+          e.diary,
+          e.planned,
+          e.did,
+          e.proof,
+          e.metric,
+          e.unexpected,
+          e.problem,
+          e.mistake,
+          e.learned,
+          e.decision,
+          e.strategy,
+          e.why,
+          e.surprised,
+          e.reflection,
+          e.notes,
+        ]
+          .filter(Boolean)
+          .join(" ")
+          .toLowerCase();
+        const rules = [
+          [
+            "Failure",
+            /fail(?:ed|ure)?|could not|couldn't|didn't work|mistake|missed|gave up|stuck|procrastinat|wasted|lost time/,
+          ],
+          [
+            "Conflict",
+            /conflict|argument|disagree|problem|blocked|obstacle|struggle|difficult|hard to|late|overslept|woke up late|alarm|tired|stress|deadline/,
+          ],
+          [
+            "Breakthrough",
+            /breakthrough|finally|solved|figured out|understood|fixed|worked after|realized|realised/,
+          ],
+          [
+            "Unexpected discovery",
+            /unexpected|surprised|discovered|found out|didn't expect|did not expect/,
+          ],
+          [
+            "Turning point",
+            /decided to|changed my plan|switch(?:ed)? to|from now on|new strategy|turning point/,
+          ],
+          [
+            "Final result",
+            /finished|completed|published|launched|submitted|result was|achieved|final result/,
+          ],
+          [
+            "Progress",
+            /completed|studied|built|coded|recorded|practiced|practised|learned|learned|worked on|made progress|revised/,
+          ],
+          ["Routine work", /routine|usual|regular|daily|as planned|normal day/],
+        ];
+        const found = rules
+          .filter(([, re]) => re.test(text))
+          .map(([tag]) => tag);
+        return found.length ? found : ["Routine work"];
+      }
       function tJournal(v, P) {
-        const flt = UI.jtag || "";
-        const jr = v.jr
-          .map((e, i) => [e, i])
-          .filter(([e]) => !flt || (e.tags || []).includes(flt));
+        const jr = v.jr.map((e, i) => [e, i]);
         return (
           sec(
             "Daily capture workflow",
@@ -3260,20 +3376,27 @@ Begin with Stage 1.`;
             "Timeline",
             "Important events across the whole project. Click an event to jump to it.",
             v.jr.length
-              ? `<div class="tl">${v.jr.map((e, i) => `<div class="ev ${((e.tags && e.tags[0]) || "").replace(/ /g, "-")}" data-act="jopen" data-key="${P}jr.${i}" tabindex="0" role="button" style="cursor:pointer"><b>${esc(e.day || e.date || "Entry")}</b><br>${(e.tags || []).map((t) => `<span class="badge">${t}</span>`).join(" ")}<div>${esc((e.problem || e.learned || e.did || "").slice(0, 80))}</div>${e.metric ? `<div class="help">📊 ${esc(e.metric)}</div>` : ""}</div>`).join("")}</div>`
+              ? `<div class="tl">${v.jr.map((e, i) => `<div class="ev ${((e.tags && e.tags[0]) || "").replace(/ /g, "-")}" data-act="jopen" data-key="${P}jr.${i}" tabindex="0" role="button" style="cursor:pointer;position:relative;padding-right:34px"><button type="button" class="icon" data-act="del" data-path="${P}jr" data-i="${i}" aria-label="Delete timeline entry dated ${esc(e.day || e.date || "Entry")}" title="Delete this entry" style="position:absolute;right:2px;top:2px;font-size:14px;background:var(--bg);z-index:2">Delete ×</button><b>${esc(e.day || e.date || "Entry")}</b><br>${(e.tags || []).map((t) => `<span class="badge">${esc(t)}</span>`).join(" ")}<div>${esc((e.problem || e.learned || e.did || "").slice(0, 80))}</div>${e.metric ? `<div class="help">📊 ${esc(e.metric)}</div>` : ""}</div>`).join("")}</div>`
               : `<div class="empty">No entries yet.</div>`,
           ) +
-          `<div class="row"><button class="btn pri" data-act="add" data-path="${P}jr" data-tpl="jr">+ New entry</button><div class="fld" style="min-width:200px"><select id="jtag" aria-label="Filter by tag">${optsHtml(ENTRY_TAGS, flt)}</select></div></div>` +
+          `<div class="row"><button class="btn pri" data-act="add" data-path="${P}jr" data-tpl="jr">+ New diary entry</button><span class="help">Choose or edit the date, then write the whole day in one place. Suggested event tags are inferred from your text and can be reviewed.</span></div>` +
           (jr.length
             ? jr
-                .map(([e, i]) =>
-                  card(
+                .map(([e, i]) => {
+                  e.tags = inferJournalTags(e);
+                  return card(
                     P + "jr",
                     i,
-                    `${esc(e.day || e.date || "Entry")} ${(e.tags || []).map((t) => `<span class="badge ac">${t}</span>`).join(" ")}`,
-                    `<div class="tags" role="group" aria-label="Tags">${ENTRY_TAGS.map((t) => `<label><input type="checkbox" data-tag="${t}" data-path="${P}jr.${i}.tags"${(e.tags || []).includes(t) ? " checked" : ""}> ${t}</label>`).join("")}</div><div class="grid g2" style="margin-top:10px">${JF.map(([k, l, t]) => fld(`${P}jr.${i}.${k}`, l, { type: t, rows: 2 })).join("")}</div>`,
-                  ),
-                )
+                    `${esc(e.day || e.date || "Entry")} ${(e.tags || []).map((t) => `<span class="badge ac">${esc(t)}</span>`).join(" ")}`,
+                    `<div class="alert info">Detected from your diary text: ${(e.tags || []).map(esc).join(", ")}. This is local keyword-based detection, not an AI model; review the labels if needed.</div><div class="grid g2" style="margin-top:10px">${fld(`${P}jr.${i}.date`, "Date", { type: "date" })}${fld(`${P}jr.${i}.day`, "Day / label", { ph: "e.g. Day 4 — filming and study" })}${fld(`${P}jr.${i}.diary`, "Full-day diary — write everything that happened in your own words", { type: "textarea", rows: 10, span: 1, help: "Include when you woke up, what you planned, what actually happened, interruptions, conflicts, feelings, decisions, work completed and what you learned." })}${JF.filter(
+                      ([k]) => !["date", "day"].includes(k),
+                    )
+                      .map(([k, l, t]) =>
+                        fld(`${P}jr.${i}.${k}`, l, { type: t, rows: 2 }),
+                      )
+                      .join("")}</div>`,
+                  );
+                })
                 .join("")
             : "")
         );
@@ -3361,7 +3484,7 @@ Begin with Stage 1.`;
             "A · Performance snapshots",
             "",
             fld(a + "url", "YouTube video URL", { type: "url" }) +
-              `<div style="height:8px"></div>` +
+              `<div class="grid g2" style="margin-top:10px"><div class="fld"><label for="graph_${v.id}">Audience-retention graph screenshot</label><input type="file" accept="image/*" id="graph_${v.id}" data-img="${a}graph"><div class="help">Upload a screenshot from YouTube Studio. It is resized before saving in this browser.</div>${v.an.graph ? `<img src="${v.an.graph}" alt="Current retention graph" style="display:block;max-width:100%;max-height:220px;margin-top:8px;border:1px solid var(--line);border-radius:8px"> <button class="btn sm" data-act="cleargraph" data-id="${v.id}">Remove graph</button>` : `<div class="help">No graph uploaded yet.</div>`}</div>${fld(a + "graphNote", "Graph note / retention pattern", { type: "textarea", rows: 3, help: "Example: sharp drop in the first 20 seconds; compare with the opening and title promise." })}</div><div style="height:8px"></div>` +
               (v.an.snaps.length
                 ? v.an.snaps
                     .map((s, i) =>
@@ -3612,14 +3735,9 @@ Begin with Stage 1.`;
           ([k, i, l], n) =>
             `<a data-act="nav" data-view="${k}" class="${UI.view === k || (UI.view === "video" && k === "pipeline") ? "on" : ""}" tabindex="0" role="link"><span class="n">${i}</span>${l}</a>`,
         ).join("");
-        try {
-          $("#main").innerHTML = VIEWS[UI.view]
-            ? VIEWS[UI.view]()
-            : VIEWS.dashboard();
-        } catch (err) {
-          console.error("Render error:", err);
-          $("#main").innerHTML = `<div class="alert bad" style="margin:24px"><b>Render error:</b> ${esc(err.message)}<br><br>This usually means saved data is corrupted. Try: <button class="btn dng" onclick="localStorage.removeItem('yt-creator-os-v1');location.reload()">Reset local data</button> then click <b>Load from Notion</b>.</div>`;
-        }
+        $("#main").innerHTML = VIEWS[UI.view]
+          ? VIEWS[UI.view]()
+          : VIEWS.dashboard();
         const pt = $("#ptxt");
         if (pt) pt.value = get(pt.dataset.p) || "";
         calc();
@@ -3704,6 +3822,10 @@ Begin with Stage 1.`;
           t.value = "";
           return;
         }
+        if (t.dataset.scriptImport && t.files[0]) {
+          importScriptFile(t.files[0], t.dataset.scriptImport, t);
+          return;
+        }
         if (t.dataset.img && t.files[0]) {
           const f = t.files[0],
             img = new Image(),
@@ -3757,6 +3879,15 @@ Begin with Stage 1.`;
           case "open":
             openVideo(id, b.dataset.tab || UI.tab);
             break;
+          case "cleargraph": {
+            const v = vById(id);
+            if (v && v.an) {
+              v.an.graph = "";
+              touch();
+              render();
+            }
+            break;
+          }
           case "tab":
             UI.tab = b.dataset.tab;
             if (b.dataset.regen) {
@@ -3768,9 +3899,6 @@ Begin with Stage 1.`;
             break;
           case "newvideo":
             createVideo();
-            break;
-          case "loadnotion":
-            loadNotionPlans();
             break;
           case "dup":
             dupVideo(id);
@@ -3854,6 +3982,16 @@ Begin with Stage 1.`;
           case "copyscr":
             copyText(vById(id).scr.prompt || "");
             break;
+          case "exportscript": {
+            const v = vById(id);
+            if (!v) break;
+            download(
+              `video-${v.num}-script.txt`,
+              v.scr.fullDraft || "",
+              "text/plain;charset=utf-8",
+            );
+            break;
+          }
           case "regenscr":
             confirmDlg(
               "Regenerate prompt?",
@@ -3929,7 +4067,7 @@ Begin with Stage 1.`;
             const t = v.jr
               .map(
                 (e) =>
-                  `[${e.date || ""} ${e.day || ""}] ${(e.tags || []).join("/")}\n${[
+                  `[${e.date || ""} ${e.day || ""}] ${(e.tags || []).join("/")}\nDiary: ${e.diary || ""}\n${[
                     "planned",
                     "did",
                     "proof",
@@ -3956,16 +4094,39 @@ Begin with Stage 1.`;
             render();
             break;
           }
-          case "jopen":
-            OPEN.add(b.dataset.key);
+          case "deljournal": {
+            const v = vById(id);
+            const i = +b.dataset.i;
+            if (!v || !v.jr || !v.jr[i]) break;
+            confirmDlg(
+              "Delete journal entry?",
+              "This removes the selected timeline event and its journal details permanently.",
+              "Delete entry",
+              () => {
+                v.jr.splice(i, 1);
+                OPEN.clear();
+                touch();
+                render();
+              },
+            );
+            break;
+          }
+          case "jopen": {
+            const key = b.dataset.key;
+            if (!key) break;
+            OPEN.add(key);
             render();
             setTimeout(() => {
-              const d = document.querySelector(
-                `details[data-key="${b.dataset.key}"]`,
+              const d = Array.from(document.querySelectorAll("details.c")).find(
+                (el) => el.dataset.key === key,
               );
-              d && d.scrollIntoView({ behavior: "smooth", block: "center" });
-            }, 50);
+              if (d) {
+                d.open = true;
+                d.scrollIntoView({ behavior: "smooth", block: "center" });
+              }
+            }, 100);
             break;
+          }
           case "promote": {
             const x = S.ideas[+b.dataset.i];
             const v = newVideo(x.idea);
@@ -4041,402 +4202,284 @@ Begin with Stage 1.`;
           id: uid(),
           sample: true,
           vid,
-          cat: "Slow opening",
-          what: "(Fictional example) Retention dropped sharply in the first 40 seconds while I explained my background.",
+          cat: "Packaging / opening",
+          what: "Review whether the opening delivers the video premise quickly.",
           evidence:
-            "(Fictional) Retention graph fell from 100% to 58% by 0:40.",
-          why: "Viewers who didn't know me waited too long for the premise.",
-          conf: "Medium",
+            "No verified retention evidence was provided in the current Notion export.",
+          why: "This is a question to test, not a confirmed diagnosis.",
+          conf: "Low",
           should:
-            "Open with the demo of the finished app, then explain the challenge.",
+            "Compare YouTube Studio retention with the actual opening before deciding.",
           action:
-            "Next video: show the result in the first 10 seconds; background after 0:30.",
-          priority: "High",
-          repeated: "No",
+            "Record the retention graph and note the exact timestamp of any major drop.",
+          priority: "Medium",
+          repeated: "Unknown",
           nextVid: "",
-          measure: "Retention at 0:30 above 70%",
+          measure: "Compare retention at the opening and later timestamps.",
           worked: "Not yet",
         };
       }
       function sampleVideo() {
         const v = newVideo(
-          "(Fictional example) I Built and Launched an App in 21 Days",
+          "I Built an App to Help People Move On Without Deleting Their Memories",
         );
-        v.sample = true;
-        v.status = "Analyzed";
-        v.stages = Array(15).fill(true);
-        v.stages[14] = false;
+        v.sample = false;
+        v.status = "Research";
+        v.stages = Array(15).fill(false);
         Object.assign(v.idn, {
           category: "Building an App",
           pillar: "Idea to Execution",
           format: "Idea-to-execution documentary",
-          plannedDate: "2026-03-01",
-          actualDate: "2026-03-22",
-          audience: "Aspiring builders who haven't shipped anything yet",
-          viewer: "Someone who has app ideas but never finishes",
-          problem: "Can a beginner really ship a working app in three weeks?",
-          series: "Ship It",
+          audience:
+            "People interested in apps, personal projects, and honest developer journeys",
+          viewer:
+            "Someone curious about how an app is built and the real problem it solves",
+          problem:
+            "How can someone make it easier to move on without immediately deleting memories?",
           relation: "Standalone",
-          whyRelevant: "Matches the 'Idea to Execution' pillar.",
-          newViewerOk: "Yes",
-          researchStatus: "Done",
-          prodStatus: "Done",
-          final: "I Built and Launched an App in 21 Days (as a beginner)",
+          final:
+            "I Built an App to Help People Move On Without Deleting Their Memories",
         });
         Object.assign(v.goal, {
-          g1: "(Fictional) Ship a small habit-tracking app to real users.",
-          g2: "I never finish side projects.",
-          g3: "Basic mobile app development",
-          g4: "A habit-tracking app",
-          g5: "",
-          g6: "Yes — I want the app regardless.",
-          g7: "10 real people using it, even if the video flops.",
-          cands: [
-            {
-              idea: "21-day app launch",
-              pers: "5",
-              aud: "4",
-              note: "Clear deadline",
-            },
-            {
-              idea: "Learn a language in 30 days",
-              pers: "3",
-              aud: "4",
-              note: "Less measurable",
-            },
-          ],
+          g1: "Build and explain MoveOn, an app designed to help people gradually move on without forcing them to immediately delete memories.",
+          g2: "People may repeatedly revisit old photos, reread chats, or check an ex's social profile even when doing so hurts them.",
+          g6: "Yes — the project should be useful beyond the video.",
+          g7: "Clearly explain the problem, demonstrate the real app, and show what it actually does.",
         });
         Object.assign(v.prem, {
-          activity: "Build a habit-tracking app in 21 days",
+          activity: "Build and demonstrate MoveOn",
           experiment:
-            "Beginner builds and launches a real app in 21 days with a hard deadline",
-          whyStranger: "Everyone has an app idea; few ship.",
-          curiosity: "Will it actually launch — and will anyone use it?",
-          unusual: "Beginner + fixed deadline + real users as the test",
-          stakes: "Public deadline; if it doesn't ship, I say so.",
-          discover: "What actually blocks beginners.",
-          reveal: "Whether shipping is a skill or a mindset.",
-          oneLine: "A beginner tries to launch a real app in 21 days.",
-          standalone: "Yes",
+            "Show how the app makes selected memories and distracting apps harder to access over time.",
+          whyStranger:
+            "The problem is emotionally relatable and the app has a concrete demonstration.",
+          curiosity:
+            "How does the app help someone move on without deleting their memories?",
+          stakes:
+            "The app must be demonstrated honestly; avoid presenting it as a guaranteed solution.",
+          discover:
+            "How the app's features work and what problem they are intended to address.",
+          reveal:
+            "A practical app concept for creating friction around repeated habits.",
+          oneLine:
+            "I built an app designed to help people move on without immediately deleting their memories.",
         });
-        v.refs.push({
-          creator: "(Fictional) Maker Dan",
-          channel: "Maker Dan",
-          title: "(Fictional) I Built an App in 7 Days",
-          url: "",
-          pub: "2025-11-02",
-          views: "1,200,000",
-          subs: "150,000",
-          len: "14:20",
-          titleStruct: "I [did X] in [fixed time]",
-          thumb: "Face + phone screen showing app",
-          hook: "Shows the finished app in 5 seconds",
-          premise: "Build an app in a week",
-          structure: "Chronological with milestones",
-          conflict: "Bug blocks launch on day 5",
-          turning: "Rewrites login on day 6",
-          payoff: "Launch + first users",
-          comments: "Viewers wanted to see the code and the failures",
-          valued: "Honest bugs and a clear deadline",
-          didWell: "Fast opening, clear stakes",
-          missing: "Never shows whether anyone used it",
-          facts: "1.2M views, 150k subs, 14:20 long.",
-          interp: "Fixed deadline + visible outcome probably helped.",
-          learn:
-            "Clear deadline and early payoff; I can show what happened after launch.",
-        });
-        v.refs.push({
-          creator: "(Fictional) Ana Codes",
-          channel: "Ana Codes",
-          title: "(Fictional) Learning to Code for 30 Days",
-          url: "",
-          pub: "2025-06-10",
-          views: "340,000",
-          subs: "20,000",
-          len: "18:05",
-          titleStruct: "Learning X for N days",
-          thumb: "Before/after screens",
-          hook: "Day 1 vs day 30 comparison",
-          premise: "Learn coding in a month",
-          structure: "Day-by-day",
-          conflict: "Burnout week 3",
-          turning: "Switched to small projects",
-          payoff: "A tiny game",
-          comments: "Too slow in the middle",
-          valued: "Relatable struggle",
-          didWell: "Honest burnout moment",
-          missing: "Day-by-day felt repetitive",
-          facts: "340k views, 20k subs.",
-          interp:
-            "High view-to-sub ratio suggests the topic travelled beyond her audience (not certain).",
-          learn: "Compress the middle; focus on turning points.",
-        });
-        Object.assign(v.insp, {
-          which: "(Fictional) Maker Dan's 7-day app video",
-          what: "Challenge structure and fixed-deadline premise",
-          demonstrated: "'Build an app in X days' format drew strong interest",
+        v.plan = {
+          brainstorm:
+            "MoveOn: an app to help people move on without deleting their memories.",
+          thumbnailIdea:
+            "Show the app on a phone and communicate the contrast between keeping memories and making them harder to access.",
+          promise: "Explain how the app works and why I built it.",
+          fulfil:
+            "Demonstrate the actual features and explain the problem each one addresses.",
+          uploadDate: "",
+          captured:
+            "App screen recordings and footage that already exist; verify the exact files before editing.",
+          built:
+            "MoveOn app concept and its memory-access / app-lock features.",
+          needRecord:
+            "Record clear demonstrations of each feature that is actually working in the current build.",
+          availableNow:
+            "App demonstration and screen recordings that can be verified.",
+          previousScript:
+            "Result-first transformation format: Hook → Relatable Problem → Immediate Solution → Friction → Pattern Interrupt → Proof → Lesson → Engagement Question.",
+          previousFormat: "Result-First Transformation Format",
+          fixNext:
+            "Deliver the premise and app demonstration early. Validate any retention diagnosis against YouTube Studio data instead of assuming a cause.",
+          lostInterest: "",
+          retentionEvidence: "",
           change:
-            "Beginner perspective, 21 days, real users measured after launch",
-          angle: "The test isn't shipping — it's whether anyone uses it.",
-          whyMine: "Shows the part the original skipped.",
-          adding: "A post-launch usage result",
-          borrowing: "Borrowing the format, not the execution.",
-        });
-        v.val.scores = {
-          0: 5,
-          1: 4,
-          2: 4,
-          3: 4,
-          4: 3,
-          5: 5,
-          6: 4,
-          7: 3,
-          8: 4,
-          9: 4,
-          10: 4,
-          11: 4,
+            "Test a faster opening that shows the app or result early; compare with actual retention data.",
+          scriptFormat: "Idea-to-execution documentary",
+          duration: "2–3 minutes",
+          centralPromise:
+            "Show how MoveOn is designed to help people move on without immediately deleting memories.",
+          hook: "Open with the core problem or a clear app demonstration.",
+          demo: "Demonstrate only features that work in the current build.",
+          ending:
+            "Summarize what the app does, its limitations, and ask viewers a relevant question.",
         };
-        v.val.decision = "Proceed";
-        v.val.notes =
-          "Weakest: visual potential and conflict (we'll see if real conflict appears).";
-        v.pkg.core = "Beginner ships a real app in 21 days";
-        v.pkg.curiosity = "Will anyone use it?";
-        v.pkg.stakes = "Public deadline";
-        v.pkg.emotion = "Curiosity, empathy";
-        v.pkg.viewer = "Aspiring builders";
-        v.pkg.titles = [
-          {
-            title: "I Built an App in 21 Days",
-            clarity: "5",
-            curiosity: "3",
-            specificity: "4",
-            relevance: "4",
-            credibility: "5",
-            alignment: "5",
-          },
-          {
-            title: "I Launched an App in 21 Days (as a beginner)",
-            clarity: "5",
-            curiosity: "4",
-            specificity: "4",
-            relevance: "5",
-            credibility: "5",
-            alignment: "5",
-          },
-          {
-            title: "Can a Beginner Ship an App in 3 Weeks?",
-            clarity: "4",
-            curiosity: "5",
-            specificity: "3",
-            relevance: "5",
-            credibility: "5",
-            alignment: "4",
-          },
-        ];
-        Object.assign(v.pkg, {
-          selected: "I Built and Launched an App in 21 Days (as a beginner)",
-          reason: "Adds the beginner angle without overpromising.",
-          tConcept: "Phone showing the app + a '21' day counter",
-          tSubject: "Me holding the phone",
-          tContrast: "Messy desk vs polished app screen",
-          tEmotion: "Proud but tired",
-          tText: "21 DAYS",
-          tTwoSec: "Yes",
-          tWhy: "Shows result and time limit at a glance.",
-          tComplement: "Adds the visual result that the title only states.",
-        });
-        v.pkg.checks = { 0: true, 1: true, 2: true, 3: true, 4: true };
-        Object.assign(v.scr, {
-          format: "Idea-to-execution documentary",
-          audience: "Aspiring builders",
-          promise: "A real attempt to launch an app in 21 days",
-          question: "Can a beginner ship — and will anyone use it?",
-          conflict:
-            "A (fictional) payment bug on day 14 almost kills the launch",
-          experience: "Rooting for the builder",
-          arc: "Optimism → wall → pivot → launch → honest result",
-          hook: "Finished app in the first 10 seconds",
-          duration: "12–14 min",
-          payoff: "Real user numbers",
-          evidence: "Screen recordings, commit history, store dashboard",
-          voice: "(Fictional) Casual, short sentences, 'honestly', 'okay so'.",
-          missing: "Day 9 notes missing — ask me.",
-        });
-        v.scr.outline = [
-          {
-            beat: "Hook",
-            dur: "0.5",
-            purpose: "Show the result",
-            happened: "Finished app on a phone",
-            evidence: "Screen recording",
-            narration: "So this is an app I didn't think I could finish.",
-            visuals: "Phone demo",
-          },
-          {
-            beat: "Goal, rules and stakes",
-            dur: "1.5",
-            purpose: "Set stakes",
-            happened: "Announced 21-day deadline",
-            evidence: "Day 1 log",
-            narration: "Rules: ship by day 21, real users only.",
-            visuals: "Whiteboard",
-          },
-          {
-            beat: "The wall",
-            dur: "3",
-            purpose: "Real conflict",
-            happened: "Payment bug day 14",
-            evidence: "Day 14 log + error screenshot",
-            narration: "[to write from journal]",
-            visuals: "Screen recording",
-          },
-          {
-            beat: "Pivot",
-            dur: "2",
-            purpose: "Decision",
-            happened: "Cut the feature",
-            evidence: "Day 15 log",
-            narration: "[to write]",
-            visuals: "Code diff",
-          },
-          {
-            beat: "Launch and result",
-            dur: "3",
-            purpose: "Payoff",
-            happened: "Launched with 12 users",
-            evidence: "Dashboard screenshot",
-            narration: "[to write]",
-            visuals: "Dashboard",
-          },
-        ];
+        v.scr.format = "Idea-to-execution documentary";
+        v.scr.duration = "2–3 minutes";
+        v.scr.promise =
+          "Explain the problem behind MoveOn, demonstrate the app, and show how it is intended to help.";
+        v.scr.question =
+          "Can an app make it easier to move on without deleting memories?";
         v.scr.sections = [
           {
             title: "Hook",
-            dur: "0.5",
+            dur: "0.1",
             narration:
-              "(Fictional sample) So this is an app I didn't think I could finish…",
-            footage: "Phone demo",
-            evidence: "Screen recording",
+              "[Write the opening using a real app demonstration or a clearly stated problem.]",
+            footage: "MoveOn app demonstration",
+            evidence: "Working screen recording",
+          },
+          {
+            title: "Relatable problem",
+            dur: "0.2",
+            narration:
+              "People may revisit photos, reread chats, or check social profiles even when it hurts.",
+            footage: "Use appropriate, non-fabricated visuals",
+            evidence: "Explain as the problem the app is designed for",
+          },
+          {
+            title: "Immediate solution",
+            dur: "0.2",
+            narration:
+              "Introduce MoveOn and explain its core idea: make memories harder to reach gradually, rather than forcing immediate deletion.",
+            footage: "App home screen and feature overview",
+            evidence: "Actual app UI",
+          },
+          {
+            title: "Feature demonstration",
+            dur: "0.8",
+            narration:
+              "Demonstrate the Memory Vault, Password Lock, App Lock, and optional early-access penalty only if each feature is implemented and working.",
+            footage: "Screen recordings of working features",
+            evidence: "Verify each feature in the current app",
+          },
+          {
+            title: "Limitations and lesson",
+            dur: "0.3",
+            narration:
+              "Explain what the app can help with without claiming it guarantees emotional recovery.",
+            footage: "Creator on camera / app close-up",
+            evidence: "Accurate product description",
+          },
+          {
+            title: "Engagement question",
+            dur: "0.2",
+            narration:
+              "Ask viewers what they think of the idea or what feature would be useful.",
+            footage: "Creator on camera",
+            evidence: "Question for viewers",
+          },
+        ];
+        v.prod.shots = [
+          {
+            section: "Opening",
+            narr: "Introduce the problem or app immediately",
+            visual: "MoveOn app screen / creator on camera",
+            have: "Check existing footage",
+            missing: "Record a clean opening take if needed",
+            status: "Needed",
+          },
+          {
+            section: "App demonstration",
+            narr: "Show the core workflow",
+            visual: "Screen recording of the app",
+            have: "Check existing screen recordings",
+            missing: "Capture current working build",
+            status: "Needed",
+          },
+          {
+            section: "Memory Vault",
+            narr: "Explain how selected photos are stored",
+            visual: "Demonstrate the actual Memory Vault",
+            have: "Verify existing footage",
+            missing: "Record feature if missing",
+            status: "Needed",
+          },
+          {
+            section: "App Lock",
+            narr: "Show allowed and blocked access windows",
+            visual: "Demonstrate a supported app lock flow",
+            have: "Verify existing footage",
+            missing: "Record feature if missing",
+            status: "Needed",
+          },
+          {
+            section: "Closing",
+            narr: "Summarize the idea and ask viewers a question",
+            visual: "Creator on camera",
+            have: "Check existing footage",
+            missing: "Record closing if needed",
+            status: "Needed",
           },
         ];
         v.jr = [
           {
-            date: "2026-03-14",
-            day: "Day 14",
-            tags: ["Failure", "Conflict"],
-            planned: "Finish payment flow",
-            did: "Debugged payment flow all day",
-            proof: "Screenshot of error log",
-            metric: "0 of 3 payment tests passing",
-            unexpected: "Library changed its API",
-            problem: "Payment flow broken",
-            mistake: "Didn't read the changelog",
-            learned: "Check dependency versions first",
-            decision: "Drop payments from v1",
-            strategy: "Ship free version",
-            emotion: "Frustrated",
-            why: "Almost ended the challenge",
-            surprised: "How relieved cutting scope felt",
-            footage: "Raw-to-camera at 11pm",
-            fpath: "/footage/day14/",
-            screen: "err_log.png",
-            reflection: "(Fictional) I'm questioning if this was a good idea.",
-            notes: "Probably the main turning point",
+            date: "",
+            day: "Opening footage",
+            tags: ["Progress"],
+            planned: "Capture the video opening.",
+            did: "",
+            proof: "",
+            metric: "",
+            problem: "",
+            learned: "",
+            footage:
+              "Graph on the screen; 4am alarm → tired → long to-do list; crossing out tasks aggressively; sitting silently with heavy eyes; quick cut from a different angle with a slight zoom.",
+            notes: "Shooting notes from the existing Notion template.",
           },
           {
-            date: "2026-03-21",
-            day: "Day 21",
-            tags: ["Final result"],
-            did: "Launched free version",
-            proof: "Store listing",
-            metric: "12 signups on day 1",
-            learned: "Shipping small beats shipping perfect",
-            reflection: "(Fictional) Tiny numbers but real people.",
+            date: "",
+            day: "Study sequence",
+            tags: ["Progress"],
+            planned: "Capture a short sequence showing the work.",
+            did: "",
+            proof: "",
+            metric: "",
+            problem: "",
+            learned: "",
+            footage: "Checking a box → studying → rooftop clip.",
+            notes: "Shooting notes from the existing Notion template.",
           },
-        ];
-        v.mine.text = "(Fictional) See journal entries Day 14 and Day 21.";
-        v.mine.q4 = "Day 14 payment bug";
-        v.mine.q9 = "Decision to drop payments (Day 14/15)";
-        v.mine.q10 = "12 signups on launch day";
-        v.prod.checks = {
-          pre0: true,
-          pre1: true,
-          pre3: true,
-          prod0: true,
-          prod1: true,
-          edit0: true,
-          edit8: true,
-        };
-        v.prod.shots = [
           {
-            section: "The wall",
-            narr: "Payment bug",
-            visual: "Screen recording of error",
-            have: "err_log.png",
-            missing: "Footage of fix",
-            status: "Needed",
+            date: "",
+            day: "App demonstration",
+            tags: ["Progress"],
+            planned: "Show the actual MoveOn app.",
+            did: "",
+            proof: "",
+            metric: "",
+            problem: "",
+            learned: "",
+            footage:
+              "Screen recording / app demonstration; confirm which features are working before filming.",
+            notes: "Current Notion page describes the MoveOn app.",
           },
         ];
-        v.an.url = "https://youtube.com/watch?v=EXAMPLE";
-        v.an.snaps = [
-          {
-            window: "7 days",
-            date: "2026-03-29",
-            views: "18,400",
-            impr: "210,000",
-            ctr: "4.1",
-            avd: "4:12",
-            avp: "34",
-            wt: "1,290",
-            ret30: "58",
-            subs: "310",
-            traffic: "Browse 55%, Search 20%, Suggested 25% (fictional)",
-            notes: "(Fictional example data)",
-          },
-        ];
-        v.an.advice = [
-          {
-            text: "(Fictional) Studio noted a drop in the first minute.",
-            mine: "Matches my retention graph.",
-            decision: "Accepted",
-            why: "Evidence agrees",
-            changed: "Plan shorter intro next time",
-            result: "",
-          },
-        ];
-        v.an.ret = [
-          {
-            ts: "0:40",
-            obs: "Drop from 100% to 58%",
-            happened: "Explaining my background",
-            expl: "Viewers who don't know me wanted the premise sooner",
-            conf: "Moderate",
-            lesson: "Premise before backstory",
-          },
-        ];
-        v.an.dx.open = {
-          ev: "58% retention at 0:40 (fictional)",
-          alt: "Mismatch between thumbnail and opening",
-          conf: "Medium",
+        v.mine.text =
+          "Current planning notes from Notion. The available notes include a result-first script format and a list of footage ideas. No specific audience-retention drop has been entered here; use YouTube Studio data before diagnosing performance.";
+        v.mine.q0 =
+          "Use the actual starting situation and footage; do not invent emotions or events.";
+        v.mine.q13 =
+          "Show what the app actually does and state its limitations honestly.";
+        v.an = {
+          url: "",
+          graph: "",
+          graphNote: "",
+          snaps: [],
+          advice: [],
+          ret: [],
+          q: {},
+          dx: {},
         };
         v.next = {
           fix: [
             {
-              text: "Open with the finished result; background after 0:30",
+              text: "Show the premise or app demonstration early; validate with actual retention data.",
               result: "",
             },
           ],
-          keep: [{ text: "Show real failures with evidence" }],
-          test: [{ text: "Shorter intro (under 15 s)" }],
+          keep: [
+            {
+              text: "Use real footage and a clear, result-first structure.",
+              result: "",
+            },
+          ],
+          test: [
+            {
+              text: "Test a faster opening and compare the retention graph after publishing.",
+              result: "",
+            },
+          ],
         };
         return v;
       }
-
       /* ============ INIT ============ */
       load();
       render();
-      // Auto-load from Notion on startup
-      loadNotionPlans().catch(e => console.warn("Auto-load from Notion failed:", e));
       if (memOnly)
         $("#saved").textContent = "⚠ Storage unavailable — export backups";
     </script>
